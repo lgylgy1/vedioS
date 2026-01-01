@@ -1,5 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
@@ -38,7 +38,9 @@ async def root():
         "endpoints": {
             "POST /upload": "上传视频文件并自动处理索引",
             "GET /search": "基于自然语言查询检索视频片段",
-            "GET /index-info": "获取索引信息"
+            "GET /video/{filename}": "获取上传的视频文件",
+            "GET /index-info": "获取索引信息",
+            "POST /extract-segment": "提取视频片段"
         }
     }
 
@@ -144,7 +146,7 @@ async def search_videos(
                 "start_time": result["start_time"],
                 "end_time": result["end_time"],
                 "duration": result["end_time"] - result["start_time"],
-                "video_path": result["video_path"],
+                "video_filename": Path(result["video_path"]).name,
                 "chunk_index": result["chunk_index"]
             }
             formatted_results.append(formatted_result)
@@ -177,12 +179,29 @@ async def get_index_info():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取索引信息时出错: {str(e)}")
 
+@app.get("/video/{video_filename}")
+async def get_video(video_filename: str):
+    """
+    获取上传的视频文件
+
+    - **video_filename**: 视频文件名
+    """
+    video_path = UPLOAD_DIR / video_filename
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="视频文件不存在")
+
+    return FileResponse(
+        path=str(video_path),
+        media_type='video/mp4',
+        filename=video_filename
+    )
+
 @app.post("/extract-segment")
 async def extract_segment(
-    video_path: str = Query(..., description="视频文件路径"),
-    start_time: float = Query(..., description="开始时间（秒）", ge=0),
-    end_time: float = Query(..., description="结束时间（秒）", ge=0),
-    output_filename: str = Query(..., description="输出文件名")
+    video_path: str = Form(..., description="视频文件路径"),
+    start_time: float = Form(..., description="开始时间（秒）", ge=0),
+    end_time: float = Form(..., description="结束时间（秒）", ge=0),
+    output_filename: str = Form(..., description="输出文件名")
 ):
     """
     提取视频片段
@@ -195,6 +214,21 @@ async def extract_segment(
     if start_time >= end_time:
         raise HTTPException(status_code=400, detail="开始时间必须小于结束时间")
 
+    # 检查视频文件是否存在，如果不是绝对路径则在上传目录中查找
+    if not os.path.exists(video_path):
+        # 尝试在uploaded_videos目录中查找
+        potential_path = UPLOAD_DIR / video_path
+        if os.path.exists(str(potential_path)):
+            video_path = str(potential_path)
+        else:
+            # 再次尝试，如果video_path只包含文件名
+            filename_only = Path(video_path).name
+            potential_path = UPLOAD_DIR / filename_only
+            if os.path.exists(str(potential_path)):
+                video_path = str(potential_path)
+            else:
+                raise HTTPException(status_code=404, detail=f"视频文件不存在: {video_path} (尝试过: {potential_path})")
+
     # 确保输出目录存在
     output_dir = Path("extracted_segments")
     output_dir.mkdir(exist_ok=True)
@@ -202,6 +236,10 @@ async def extract_segment(
 
     try:
         video_tool.extract_segment(video_path, start_time, end_time, str(output_path))
+
+        # 验证输出文件是否成功创建
+        if not os.path.exists(str(output_path)):
+            raise HTTPException(status_code=500, detail="输出文件未能成功创建")
 
         return JSONResponse(
             content={
@@ -220,6 +258,12 @@ async def extract_segment(
         )
 
     except Exception as e:
+        # 清理可能创建的输出文件
+        if os.path.exists(str(output_path)):
+            try:
+                os.remove(str(output_path))
+            except:
+                pass
         raise HTTPException(status_code=500, detail=f"提取片段时出错: {str(e)}")
 
 if __name__ == "__main__":

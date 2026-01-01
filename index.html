@@ -265,6 +265,73 @@
             margin-bottom: 10px;
         }
 
+        .play-btn {
+            background: #4f46e5;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.3s ease;
+        }
+
+        .play-btn:hover {
+            background: #3730a3;
+        }
+
+        .video-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .video-modal.show {
+            display: flex;
+        }
+
+        .video-content {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 90%;
+            max-height: 90%;
+            position: relative;
+        }
+
+        .video-content video {
+            max-width: 100%;
+            max-height: 70vh;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            background: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            cursor: pointer;
+            font-size: 1.2rem;
+        }
+
+        .video-info {
+            margin-top: 10px;
+            text-align: center;
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+
         @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
@@ -286,13 +353,6 @@
             <h1>🎬 VedioS</h1>
             <p>智能视频检索平台 - 让视频内容触手可及</p>
         </div>
-
-        <!-- API配置 -->
-        <div class="api-config">
-            <h3>🔧 API 配置</h3>
-            <input type="text" id="apiBaseUrl" class="config-input" placeholder="API 基础地址 (默认: http://localhost:8000)" value="http://localhost:8000">
-        </div>
-
         <div class="main-content">
             <!-- 上传区域 -->
             <div class="card">
@@ -354,15 +414,19 @@
                 <p>支持中文自然语言查询，无需精确关键词匹配</p>
             </div>
         </div>
+
+        <!-- 视频播放模态框 -->
+        <div class="video-modal" id="videoModal">
+            <div class="video-content">
+                <button class="close-btn" onclick="closeVideoModal()">×</button>
+                <video id="videoPlayer" controls></video>
+                <div class="video-info" id="videoInfo"></div>
+            </div>
+        </div>
     </div>
 
     <script>
         let apiBaseUrl = 'http://localhost:8567';
-
-        // 更新API基础地址
-        document.getElementById('apiBaseUrl').addEventListener('change', (e) => {
-            apiBaseUrl = e.target.value.replace(/\/$/, ''); // 移除末尾斜杠
-        });
 
         // 拖拽上传功能
         const uploadArea = document.getElementById('uploadArea');
@@ -472,11 +536,8 @@
                             ${result.text}
                         </div>
                         <div class="result-video" style="display: flex; justify-content: space-between; align-items: center;">
-                            <span>📹 ${result.video_path.split('/').pop() || result.video_path.split('\\\\').pop()}</span>
-                            <button onclick="extractSegment('${result.video_path}', ${result.start_time}, ${result.end_time})"
-                                    style="background: #f59e0b; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
-                                提取片段
-                            </button>
+                            <span>📹 ${result.video_filename}</span>
+                            <button class="play-btn" onclick="playVideoSegment('${result.video_filename}', ${result.start_time}, ${result.end_time})">▶️ 播放片段</button>
                         </div>
                     </div>
                 `).join('');
@@ -489,7 +550,6 @@
         // 提取视频片段
         async function extractSegment(videoPath, startTime, endTime) {
             const filename = `segment_${Math.floor(startTime)}-${Math.floor(endTime)}.mp4`;
-
             try {
                 const response = await fetch(`${apiBaseUrl}/extract-segment`, {
                     method: 'POST',
@@ -503,9 +563,7 @@
                         output_filename: filename
                     })
                 });
-
                 const result = await response.json();
-
                 if (response.ok) {
                     showStatus(`✅ 片段提取成功: ${filename}`, 'success');
                 } else {
@@ -544,6 +602,49 @@
         document.getElementById('searchQuery').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 searchVideos();
+            }
+        });
+
+        // 播放视频片段
+        function playVideoSegment(videoFilename, startTime, endTime) {
+            const videoPlayer = document.getElementById('videoPlayer');
+            const videoModal = document.getElementById('videoModal');
+            const videoInfo = document.getElementById('videoInfo');
+            // 设置视频源
+            videoPlayer.src = `${apiBaseUrl}/video/${encodeURIComponent(videoFilename)}`;
+            // 显示模态框
+            videoModal.classList.add('show');
+            // 设置视频信息
+            videoInfo.textContent = `播放时间: ${formatTime(startTime)} - ${formatTime(endTime)} (${(endTime - startTime).toFixed(1)}秒)`;
+            // 等待视频加载完成后跳转到指定时间
+            videoPlayer.addEventListener('loadedmetadata', function onLoaded() {
+                videoPlayer.removeEventListener('loadedmetadata', onLoaded);
+                videoPlayer.currentTime = startTime;
+                videoPlayer.play();
+            });
+            // 可选：在到达结束时间时暂停
+            videoPlayer.addEventListener('timeupdate', function onTimeUpdate() {
+                if (videoPlayer.currentTime >= endTime) {
+                    videoPlayer.pause();
+                    videoPlayer.removeEventListener('timeupdate', onTimeUpdate);
+                }
+            });
+        }
+
+        // 关闭视频模态框
+        function closeVideoModal() {
+            const videoPlayer = document.getElementById('videoPlayer');
+            const videoModal = document.getElementById('videoModal');
+
+            videoPlayer.pause();
+            videoPlayer.src = '';
+            videoModal.classList.remove('show');
+        }
+
+        // 点击模态框背景关闭
+        document.getElementById('videoModal').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('videoModal')) {
+                closeVideoModal();
             }
         });
 
